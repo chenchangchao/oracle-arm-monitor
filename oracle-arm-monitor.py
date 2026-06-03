@@ -12,6 +12,9 @@ import time
 import requests
 import os
 import sys
+from dotenv import load_dotenv
+load_dotenv()  # 加载环境变量
+import os
 
 # ========== 配置区域 ==========
 # 优先从 APP_DATA_DIR/.env、/data/.env、~/oracle-arm/.env 读取，再回退到环境变量/默认值
@@ -22,26 +25,6 @@ def env(name, default=""):
     return CONFIG.get(name, os.getenv(name, default))
 
 
-def load_env_file():
-    env_candidates = []
-    app_data_dir = os.getenv("APP_DATA_DIR", "/data")
-    if app_data_dir:
-        env_candidates.append(os.path.join(app_data_dir, ".env"))
-    env_candidates.append("/data/.env")
-    env_candidates.append(os.path.expanduser("~/oracle-arm/.env"))
-
-    data = {}
-    env_path = next((p for p in env_candidates if p and os.path.exists(p)), None)
-    if not env_path:
-        return data
-    with open(env_path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            data[key.strip()] = value.strip()
-    return data
 
 
 def resolve_private_key_path(path: str) -> str:
@@ -55,13 +38,13 @@ def resolve_private_key_path(path: str) -> str:
     return path
 
 
-CONFIG = load_env_file()
-TENANCY_OCID = env("TENANCY_OCID")
-USER_OCID = env("USER_OCID")
-FINGERPRINT = env("FINGERPRINT")
-PRIVATE_KEY_PATH = resolve_private_key_path(env("PRIVATE_KEY_PATH", "/data/oci/oci_api_key.pem"))
-REGION = env("REGION", "ap-seoul-1")
-COMPARTMENT_OCID = env("COMPARTMENT_OCID")
+# CONFIG = load_env_file()
+TENANCY_OCID = os.getenv("TENANCY_OCID")
+USER_OCID = os.getenv("USER_OCID")
+FINGERPRINT = os.getenv("FINGERPRINT")
+PRIVATE_KEY_PATH = resolve_private_key_path(os.getenv("PRIVATE_KEY_PATH", "/data/oci/oci_api_key.pem"))
+REGION = os.getenv("REGION", "ap-seoul-1")
+COMPARTMENT_OCID = os.getenv("COMPARTMENT_OCID")
 
 # 实例配置
 AVAILABILITY_DOMAIN = env("AVAILABILITY_DOMAIN")
@@ -75,17 +58,16 @@ def get_availability_domains():
 
 
 def shuffled_ad_iterator():
-    """每次迭代随机打乱 AD 顺序，避免总在同一宿主机上撞墙"""
+    """每次调用随机打乱 AD 顺序，避免总在同一宿主机上撞墙"""
     import random
     ads = get_availability_domains()
-    while True:
-        random.shuffle(ads)
-        yield from ads
+    random.shuffle(ads)
+    return ads
 
 SHAPE = env("SHAPE", "VM.Standard.A1.Flex")
-OCPUS = int(env("OCPUS", "1"))
-MEMORY_IN_GBS = int(env("MEMORY_IN_GBS", "6"))
-DISK_SIZE = int(env("DISK_SIZE", "50"))
+OCPUS = int(env("OCPUS", "3"))
+MEMORY_IN_GBS = int(env("MEMORY_IN_GBS", "18"))
+DISK_SIZE = int(env("DISK_SIZE", "100"))
 SUBNET_OCID = env("SUBNET_OCID")
 IMAGE_OCID = env("IMAGE_OCID")
 SSH_PUBLIC_KEY = env("SSH_PUBLIC_KEY")
@@ -94,6 +76,7 @@ SSH_PUBLIC_KEY = env("SSH_PUBLIC_KEY")
 BARK_KEY = env("BARK_KEY")
 TELEGRAM_BOT_TOKEN = env("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = env("TELEGRAM_CHAT_ID")
+FEISHU_WEBHOOK = env("FEISHU_WEBHOOK") # 新增这行
 
 # 轮询间隔
 CHECK_INTERVAL = int(env("CHECK_INTERVAL", "60"))
@@ -365,13 +348,28 @@ def send_notification(msg):
             )
         except:
             pass
-
+            
+    # ===== 新增飞书 Webhook 推送 =====
+    if FEISHU_WEBHOOK:
+        try:
+            payload = {
+                "msg_type": "text",
+                "content": {
+                    "text": f"🎉 甲骨文抢机通知\n\n{msg}"
+                }
+            }
+            requests.post(FEISHU_WEBHOOK, json=payload, timeout=5)
+            print(f"[{now()}] 飞书消息已推送")
+        except Exception as e:
+            print(f"[{now()}] 飞书推送失败: {e}")
 
 def now():
     return datetime.datetime.now().strftime("%m-%d %H:%M:%S")
 
 
 def main():
+    global burst_until
+
     if "--check" in sys.argv:
         ok = validate_config()
         print("CONFIG_OK" if ok else "CONFIG_MISSING")
@@ -381,6 +379,10 @@ def main():
     print(f"目标: {SHAPE} ({OCPUS}C/{MEMORY_IN_GBS}G)")
     print(f"AD 列表: {', '.join(get_availability_domains())}")
     print("=" * 50)
+
+    # ===== 新增：测试飞书推送 =====
+    send_notification("测试提醒：甲骨文抢机脚本已成功启动并在后台蹲守中...")
+    # ==========================
 
     if not validate_config():
         sys.exit(1)
@@ -398,6 +400,7 @@ def main():
     print("=" * 50)
     while True:
         attempt += 1
+        sleep_time = CHECK_INTERVAL
         try:
             # 冲刺模式窗口内用短间隔
             now_ts = time.time()
@@ -411,11 +414,16 @@ def main():
                 if check_arm_quota_sdk(compute_client):
                     if try_create_instance_sdk(compute_client, network_client):
                         print("抢到了！脚本退出。")
-                        break
+                        sys.exit(0) # 抢到机器，直接以绿灯成功退出
             else:
                 if check_and_create_api():
                     print("抢到了！脚本退出。")
-                    break
+                    sys.exit(0) # 抢到机器，直接以绿灯成功退出
+
+            # ===== 新增：为 GitHub Actions 准备的单次运行机制 =====
+            if env("RUN_ONCE", "false").lower() == "true":
+                print(f"[{now()}] GitHub Actions 单次执行完毕，当前无货。")
+                sys.exit(1) # 没货时以退出码 1 结束，让 Actions 标红以便下次继续
 
             if attempt % 10 == 0:
                 print(f"[{now()}] 已尝试 {attempt} 次，继续监控...")

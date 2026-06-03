@@ -1,0 +1,54 @@
+name: Python Oracle ARM Monitor
+
+on:
+  schedule:
+    - cron: "*/10 * * * *" # 每 10 分钟运行一次
+  workflow_dispatch:
+
+env:
+  # 复用你之前填写的所有的 Secrets
+  TENANCY_OCID: ${{ secrets.OCI_CLI_TENANCY }}
+  USER_OCID: ${{ secrets.OCI_CLI_USER }}
+  FINGERPRINT: ${{ secrets.OCI_CLI_FINGERPRINT }}
+  REGION: ${{ secrets.OCI_CLI_REGION }}
+  COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_ID }}
+  AVAILABILITY_DOMAIN: ${{ secrets.AD_NAME }}
+  SUBNET_OCID: ${{ secrets.OCI_SUBNET_ID }}
+  IMAGE_OCID: ${{ secrets.IMAGE_ID }}
+  SSH_PUBLIC_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
+  
+  # Python 脚本需要的其他参数配置
+  PRIVATE_KEY_PATH: "/tmp/oci_api_key.pem"
+  RUN_ONCE: "true"         # 开启刚才我们写的单次运行开关
+  SHAPE: "VM.Standard.A1.Flex"
+  OCPUS: "3"               # 你想要的 3 核
+  MEMORY_IN_GBS: "18"      # 你想要的 18G 内存
+  DISK_SIZE: "100"         # 100G 硬盘
+  
+  # 如果想用 Telegram 推送，可以在 GitHub Secrets 里加上这两个（可选）
+  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+jobs:
+  run-monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python 3.12 环境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: 安装 Python 依赖
+        run: pip install -r requirements.txt
+
+      - name: 写入私钥文件
+        run: |
+          echo "${{ secrets.OCI_CLI_KEY_CONTENT }}" > /tmp/oci_api_key.pem
+          chmod 600 /tmp/oci_api_key.pem
+
+      - name: 执行抢机脚本
+        run: python oracle-arm-monitor.py

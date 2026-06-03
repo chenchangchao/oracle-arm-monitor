@@ -66,3 +66,20 @@ python oracle-arm-monitor.py
 ## License
 
 MIT
+
+## python virtualenv
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip3 install -r requirements.txt
+
+curl -LsSf https://astral.sh/uv/install.sh | sh # 安装 uv
+# 初始化一个新项目（自动创建.venv）
+uv init oracle-arm-monitor
+
+# 或者在已有项目中创建虚拟环境
+cd hello-agents
+uv venv
+
+```
