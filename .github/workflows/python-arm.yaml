@@ -28,6 +28,7 @@ env:
   # 如果想用 Telegram 推送，可以在 GitHub Secrets 里加上这两个（可选）
   TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
   TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+  FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
 
 jobs:
   run-monitor:
